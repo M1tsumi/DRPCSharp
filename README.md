@@ -26,14 +26,6 @@ This repository is the working area for the next version of the library. It is d
 
 The linked upstream reference is [M1tsumi/DRPCSharp](https://github.com/M1tsumi/DRPCSharp), but DRPCSharp is not trying to preserve that API. The goal is to keep the useful idea of a Discord presence client while making the structure more modern and easier to extend.
 
-## What You Can Expect
-
-- A small client surface that is easy to learn.
-- Snapshot-based presence updates.
-- Clear validation rules before data reaches the transport.
-- A transport layer that is isolated from the user-facing model.
-- Tests that cover the public behavior and the main validation rules.
-
 ## Near-term work
 
 1. Add a thin sample project that shows connect, update, and disconnect end to end.
