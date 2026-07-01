@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace DRPCSharp.Model;
 
 public sealed record PresenceSecrets
@@ -17,9 +19,16 @@ public sealed record PresenceSecrets
 
     private static void ValidateSecret(string? secret, string parameterName)
     {
-        if (secret is not null && string.IsNullOrWhiteSpace(secret))
+        if (secret is null) return;
+
+        if (string.IsNullOrWhiteSpace(secret))
         {
-            throw new ArgumentException($"{parameterName} cannot be empty when supplied.", parameterName);
+            throw new ArgumentException($"{parameterName} cannot be empty or whitespace if provided.", parameterName);
+        }
+
+        if (Encoding.UTF8.GetByteCount(secret) > 128)
+        {
+            throw new ArgumentException($"{parameterName} cannot exceed 128 bytes.", parameterName);
         }
     }
 }

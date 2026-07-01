@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace DRPCSharp.Model;
 
 public sealed record PresenceSnapshot
@@ -24,7 +26,17 @@ public sealed record PresenceSnapshot
     {
         if (StartedAt.HasValue && EndsAt.HasValue && EndsAt < StartedAt)
         {
-            throw new ArgumentException("EndsAt must be on or after StartedAt.", nameof(EndsAt));
+            throw new ArgumentException("Timestamp validation failed: EndsAt must be on or after StartedAt.", nameof(EndsAt));
+        }
+
+        if (Encoding.UTF8.GetByteCount(Details ?? string.Empty) > 128)
+        {
+            throw new ArgumentException("Details field exceeds 128 bytes. Make sure the text is concise.", nameof(Details));
+        }
+
+        if (Encoding.UTF8.GetByteCount(State ?? string.Empty) > 128)
+        {
+            throw new ArgumentException("State field exceeds 128 bytes. Keep the status message brief.", nameof(State));
         }
 
         Assets?.Validate();
@@ -35,7 +47,7 @@ public sealed record PresenceSnapshot
 
         if (Buttons.Count > 2)
         {
-            throw new ArgumentException("Buttons cannot contain more than two entries.", nameof(Buttons));
+            throw new ArgumentException($"Presence can have at most 2 buttons, but {Buttons.Count} were provided.", nameof(Buttons));
         }
 
         foreach (var button in Buttons)

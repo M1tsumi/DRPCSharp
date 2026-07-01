@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace DRPCSharp.Model;
 
 public sealed record PresenceAssets
@@ -14,22 +16,32 @@ public sealed record PresenceAssets
     {
         if (string.IsNullOrWhiteSpace(LargeImageKey) && !string.IsNullOrWhiteSpace(LargeImageText))
         {
-            throw new ArgumentException("LargeImageText requires a large image key.", nameof(LargeImageText));
+            throw new ArgumentException("LargeImageText is set, but LargeImageKey is missing. The text will not be shown without an image.", nameof(LargeImageText));
         }
 
         if (string.IsNullOrWhiteSpace(SmallImageKey) && !string.IsNullOrWhiteSpace(SmallImageText))
         {
-            throw new ArgumentException("SmallImageText requires a small image key.", nameof(SmallImageText));
+            throw new ArgumentException("SmallImageText is set, but SmallImageKey is missing. The text will not be shown without an image.", nameof(SmallImageText));
         }
 
-        if (LargeImageKey is { Length: 0 })
+        if (LargeImageKey is { Length: < 2 })
         {
-            throw new ArgumentException("LargeImageKey cannot be empty.", nameof(LargeImageKey));
+            throw new ArgumentException("LargeImageKey must be at least 2 characters long.", nameof(LargeImageKey));
         }
 
-        if (SmallImageKey is { Length: 0 })
+        if (SmallImageKey is { Length: < 2 })
         {
-            throw new ArgumentException("SmallImageKey cannot be empty.", nameof(SmallImageKey));
+            throw new ArgumentException("SmallImageKey must be at least 2 characters long.", nameof(SmallImageKey));
+        }
+
+        if (Encoding.UTF8.GetByteCount(LargeImageText ?? string.Empty) > 128)
+        {
+            throw new ArgumentException("LargeImageText field exceeds 128 bytes. Keep tooltips concise.", nameof(LargeImageText));
+        }
+
+        if (Encoding.UTF8.GetByteCount(SmallImageText ?? string.Empty) > 128)
+        {
+            throw new ArgumentException("SmallImageText field exceeds 128 bytes. Keep tooltips concise.", nameof(SmallImageText));
         }
     }
 }

@@ -1,13 +1,33 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    
+    <!-- Package metadata -->
+    <PackageId>DRPCSharp.Protocol</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>M1tsumi</Authors>
+    <Description>Protocol layer for Discord Rich Presence integration</Description>
+    <Summary>Internal protocol structures and serialization for Discord Rich Presence communication</Summary>
+    <PackageTags>discord;rich-presence;rpc;gaming;dotnet;protocol</PackageTags>
+    <PackageProjectUrl>https://github.com/M1tsumi/DRPCSharp</PackageProjectUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/M1tsumi/DRPCSharp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <PackageIcon>icon.png</PackageIcon>
+    
+    <!-- Build configuration -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <WarningsNotAsErrors>CS1591</WarningsNotAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\DRPCSharp.Model\DRPCSharp.Model.csproj" />
+    <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+    <None Include="..\..\icon.png" Pack="true" PackagePath="\" Condition="Exists('..\..\icon.png')" />
   </ItemGroup>
 
 </Project>

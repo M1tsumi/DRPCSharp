@@ -8,4 +8,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/DRPCSharp.Tests/DRPCSharp.Tests.csproj" />
   </Folder>
+  <Folder Name="/samples/">
+    <Project Path="samples/DRPCSharp.Examples/DRPCSharp.Examples.csproj" />
+  </Folder>
 </Solution>

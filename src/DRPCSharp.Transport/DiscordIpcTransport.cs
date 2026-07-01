@@ -6,6 +6,8 @@ using System.Text.Json.Serialization;
 using DRPCSharp.Core;
 using DRPCSharp.Model;
 using DRPCSharp.Protocol;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DRPCSharp.Transport;
 
@@ -21,12 +23,13 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly DiscordIpcTransportOptions options;
     private readonly string applicationId;
+    private readonly ILogger _logger;
     private NamedPipeClientStream? stream;
     private CancellationTokenSource? connectionCts;
     private Task? receiveLoop;
     private bool isConnected;
 
-    public DiscordIpcTransport(string applicationId, DiscordIpcTransportOptions? options = null)
+    public DiscordIpcTransport(string applicationId, DiscordIpcTransportOptions? options = null, ILogger? logger = null)
     {
         if (string.IsNullOrWhiteSpace(applicationId))
         {
@@ -35,6 +38,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
 
         this.applicationId = applicationId.Trim();
         this.options = options ?? new DiscordIpcTransportOptions();
+        _logger = logger ?? NullLogger.Instance;
     }
 
     public event EventHandler<TransportErrorEventArgs>? ErrorOccurred;
@@ -48,9 +52,11 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
         {
             if (IsConnected)
             {
+                _logger.LogDebug("ConnectAsync called but transport is already connected.");
                 return;
             }
 
+            _logger.LogInformation("Connecting to Discord IPC...");
             await ConnectWithRetryAsync(cancellationToken);
         }
         finally
@@ -66,13 +72,17 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
         {
             if (!IsConnected)
             {
+                _logger.LogDebug("DisconnectAsync called but transport is already disconnected.");
                 return;
             }
+
+            _logger.LogInformation("Disconnecting from Discord IPC...");
 
             if (options.ClearPresenceOnDisconnect)
             {
                 try
                 {
+                    _logger.LogDebug("Clearing presence before disconnecting.");
                     await SendActivityAsync(null, cancellationToken);
                 }
                 catch (Exception exception)
@@ -83,6 +93,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
 
             CloseStream();
             await WaitForReceiveLoopAsync();
+            _logger.LogInformation("Successfully disconnected from Discord IPC.");
         }
         finally
         {
@@ -101,6 +112,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
 
             try
             {
+                _logger.LogDebug("Sending presence update to Discord.");
                 await SendActivityAsync(presence, cancellationToken);
             }
             catch (Exception exception) when (options.AutoReconnect && IsRecoverableTransportException(exception))
@@ -108,6 +120,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
                 RaiseError(TransportErrorOperation.Reconnect, "Presence write failed. Attempting to reconnect.", exception, true);
                 CloseStream();
                 await ConnectWithRetryAsync(cancellationToken);
+                _logger.LogDebug("Resending presence update after reconnection.");
                 await SendActivityAsync(presence, cancellationToken);
             }
         }
@@ -124,6 +137,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
             return;
         }
 
+        _logger.LogInformation("Transport not connected. Attempting to connect before sending presence.");
         await ConnectWithRetryAsync(cancellationToken);
     }
 
@@ -135,8 +149,10 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
         {
             try
             {
+                _logger.LogDebug("Attempting to connect to Discord IPC (attempt {Attempt}/{MaxAttempts})...", attempt, options.MaxConnectAttempts);
                 await ConnectOnceAsync(cancellationToken);
                 isConnected = true;
+                _logger.LogInformation("Successfully connected to Discord IPC.");
                 return;
             }
             catch (Exception exception)
@@ -149,11 +165,13 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
 
                 if (attempt < options.MaxConnectAttempts)
                 {
+                    _logger.LogDebug("Waiting {Delay}ms before next connection attempt.", options.RetryDelay.TotalMilliseconds);
                     await Task.Delay(options.RetryDelay, cancellationToken);
                 }
             }
         }
 
+        _logger.LogError(lastException, "Unable to connect to Discord IPC after {MaxAttempts} attempts.", options.MaxConnectAttempts);
         throw new InvalidOperationException("Unable to connect to Discord IPC.", lastException);
     }
 
@@ -164,7 +182,9 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
 
         foreach (var pipeNumber in pipeCandidates)
         {
-            var candidate = new NamedPipeClientStream(".", $"discord-ipc-{pipeNumber}", PipeDirection.InOut, PipeOptions.Asynchronous);
+            var pipeName = $"discord-ipc-{pipeNumber}";
+            _logger.LogDebug("Trying to connect to pipe: {PipeName}", pipeName);
+            var candidate = new NamedPipeClientStream(".", pipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
 
             try
             {
@@ -172,10 +192,12 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
                 timeoutCts.CancelAfter(options.ConnectTimeout);
 
                 await candidate.ConnectAsync(timeoutCts.Token);
+                _logger.LogDebug("Pipe connected. Sending handshake...");
 
                 try
                 {
                     await WriteFrameAsync(candidate, RpcFrame.CreateHandshake(applicationId), cancellationToken);
+                    _logger.LogDebug("Handshake sent successfully.");
                 }
                 catch (Exception exception)
                 {
@@ -194,6 +216,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
             {
                 lastException = exception;
                 candidate.Dispose();
+                _logger.LogWarning(exception, "Failed to connect to pipe {PipeName}.", pipeName);
             }
         }
 
@@ -204,6 +227,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
     {
         if (options.PreferredPipe.HasValue)
         {
+            _logger.LogDebug("Using preferred pipe: {PipeNumber}", options.PreferredPipe.Value);
             yield return options.PreferredPipe.Value;
             yield break;
         }
@@ -225,6 +249,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
             ? RpcPayload.CreateClearActivity(Environment.ProcessId)
             : RpcPayload.CreateSetActivity(Environment.ProcessId, presence);
 
+        _logger.LogTrace("Sending payload: {Payload}", JsonSerializer.Serialize(payload, JsonOptions));
         await WriteFrameAsync(stream, payload.ToFrame(), cancellationToken);
     }
 
@@ -248,6 +273,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
             return;
         }
 
+        _logger.LogDebug("Closing IPC stream.");
         stream.Dispose();
         stream = null;
     }
@@ -259,12 +285,15 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
             return;
         }
 
+        _logger.LogDebug("Waiting for receive loop to complete...");
         try
         {
             await receiveLoop;
+            _logger.LogDebug("Receive loop completed successfully.");
         }
         catch (OperationCanceledException)
         {
+            _logger.LogDebug("Receive loop was canceled.");
         }
         catch (Exception exception)
         {
@@ -278,6 +307,7 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
 
     private async Task ReceiveLoopAsync(Stream connectionStream, CancellationToken cancellationToken)
     {
+        _logger.LogDebug("Starting receive loop.");
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -286,8 +316,11 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
 
                 if (frame is null)
                 {
+                    _logger.LogWarning("IPC stream closed unexpectedly.");
                     break;
                 }
+
+                _logger.LogTrace("Received frame with opcode {Opcode}", frame.Opcode);
 
                 if (frame.Opcode == 2)
                 {
@@ -297,12 +330,14 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
                 if (frame.Opcode == 1)
                 {
                     // The frame is valid and intentionally retained for future event mapping.
+                    _logger.LogTrace("Received payload: {Payload}", frame.PayloadText);
                     _ = frame.PayloadText;
                 }
             }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
+            _logger.LogDebug("Receive loop canceled gracefully.");
         }
         catch (Exception exception) when (!cancellationToken.IsCancellationRequested)
         {
@@ -314,11 +349,15 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
             {
                 CloseStream();
             }
+            _logger.LogDebug("Receive loop stopped.");
         }
     }
 
     private void RaiseError(TransportErrorOperation operation, string message, Exception exception, bool isRecoverable)
-        => ErrorOccurred?.Invoke(this, new TransportErrorEventArgs(operation, message, exception, isRecoverable));
+    {
+        _logger.LogError(exception, "{Message} (Recoverable: {IsRecoverable})", message, isRecoverable);
+        ErrorOccurred?.Invoke(this, new TransportErrorEventArgs(operation, message, exception, isRecoverable));
+    }
 
     private static bool IsRecoverableTransportException(Exception exception)
         => exception is IOException or ObjectDisposedException or InvalidOperationException;
@@ -500,14 +539,10 @@ public sealed class DiscordIpcTransport : IDrpcSharpTransport
         [JsonPropertyName("size")]
         public int[]? Size { get; init; }
 
-        [JsonPropertyName("privacy")]
-        public int Privacy { get; init; }
-
         public RpcParty(PresenceParty party)
         {
             Id = party.Id;
-            Privacy = party.IsPrivate ? 1 : 0;
-            Size = party.CurrentSize.HasValue && party.MaxSize.HasValue ? new[] { party.CurrentSize.Value, party.MaxSize.Value } : null;
+            Size = new[] { party.Size, party.MaxSize };
         }
     }
 

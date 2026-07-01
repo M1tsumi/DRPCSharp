@@ -1,62 +1,791 @@
-# DRPCSharp
+# DRPCSharp - AI Developer Reference
 
-DRPCSharp is a small, async-first C# library for Discord Rich Presence.
-It is designed to be easy to understand, easy to extend, and safe to use.
+## Overview
 
-## What it does
+DRPCSharp is a modern C# library for Discord Rich Presence integration. This document provides comprehensive guidance for AI developers working with the library, including architectural decisions, best practices, and detailed API references.
 
-- Connects to Discord IPC.
-- Sends rich presence snapshots.
-- Tracks connection state.
-- Emits connection, presence, and transport error events.
+## Architecture Philosophy
 
-## Current public surface
+### Design Principles
+1. **Async-First**: All I/O operations are async by default
+2. **Immutable Data**: Presence snapshots are immutable for thread safety
+3. **Explicit Boundaries**: Clear separation between transport, protocol, and business logic
+4. **Testable**: Built with dependency injection and test doubles in mind
+5. **Fail Fast**: Validation happens early with clear error messages
 
-- `DRPCSharp.Core.DrpcSharpClient` - lifecycle, state, presence updates, and events.
-- `DRPCSharp.Model.PresenceSnapshot` - user-facing rich presence model.
-- `DRPCSharp.Model.PresenceParty` - party metadata.
-- `DRPCSharp.Model.PresenceSecrets` - join, spectate, and match secrets.
-- `DRPCSharp.Model.PresenceAssets` - image keys and tooltips.
-- `DRPCSharp.Model.PresenceButton` - presence buttons.
-- `DRPCSharp.Transport.DrpcSharpClientFactory` - convenience creation for the IPC-backed client.
-- `DRPCSharp.Transport.DiscordIpcTransport` - custom named-pipe transport.
+### Layer Responsibilities
 
-## Recommended usage
-
-Use the factory for the common path:
-
-```csharp
-await using var client = DrpcSharpClientFactory.Create("application-id");
-await client.ConnectAsync();
-await client.SetPresenceAsync(new PresenceSnapshot { Details = "Working" });
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Application Layer                       │
+│  Your code using DRPCSharp for Rich Presence              │
+├─────────────────────────────────────────────────────────────┤
+│                   DRPCSharp.Core                           │
+│  - Connection lifecycle management                        │
+│  - Event handling and state transitions                   │
+│  - Public API surface (DrpcSharpClient)                 │
+├─────────────────────────────────────────────────────────────┤
+│                   DRPCSharp.Model                          │
+│  - Strongly typed presence data structures               │
+│  - Validation logic and business rules                    │
+│  - Immutable record types                                 │
+├─────────────────────────────────────────────────────────────┤
+│                   DRPCSharp.Protocol                       │
+│  - Internal payload structures                           │
+│  - JSON serialization for Discord                        │
+│  - Version compatibility handling                       │
+├─────────────────────────────────────────────────────────────┤
+│                   DRPCSharp.Transport                      │
+│  - IPC transport implementation                          │
+│  - Connection management and reconnection                 │
+│  - Error handling and recovery                          │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-Use `DrpcSharpClient` directly when you want to inject a test transport.
+## Core API Reference
 
-## Architecture
+### DrpcSharpClient
 
-- `DRPCSharp.Core` owns client state and events.
-- `DRPCSharp.Model` owns validation and user-facing presence data.
-- `DRPCSharp.Protocol` owns the transport DTO used internally.
-- `DRPCSharp.Transport` owns IPC framing, reconnect behavior, and pipe I/O.
+The main entry point for all Discord Rich Presence operations.
 
-## Validation rules
+```csharp
+public sealed class DrpcSharpClient : IAsyncDisposable, IDisposable
+{
+    // Properties
+    public ConnectionState State { get; }
+    public bool IsConnected { get; }
+    public PresenceSnapshot? CurrentPresence { get; }
+    
+    // Events
+    public event EventHandler<ConnectionStateChangedEventArgs>? ConnectionStateChanged;
+    public event EventHandler<PresenceUpdatedEventArgs>? PresenceUpdated;
+    public event EventHandler<TransportErrorEventArgs>? ErrorOccurred;
+    
+    // Methods
+    public ValueTask ConnectAsync(CancellationToken cancellationToken = default);
+    public ValueTask DisconnectAsync(CancellationToken cancellationToken = default);
+    public ValueTask SetPresenceAsync(PresenceSnapshot presence, CancellationToken cancellationToken = default);
+}
+```
 
-- Presence timestamps must not go backwards.
-- Buttons must be valid absolute URLs.
-- Presence buttons are limited to two.
-- Party sizes must be paired and ordered.
-- Secrets are optional but must not be whitespace when supplied.
+#### Connection State Management
 
-## Development commands
+```csharp
+// State transitions are managed automatically:
+// Disconnected -> Connecting -> Connected
+// Connected -> Disconnecting -> Disconnected
+// Error recovery: Connected -> Disconnected -> Connecting -> Connected
 
-- Build: `dotnet build DRPCSharp.slnx`
-- Test: `dotnet test DRPCSharp.slnx`
+client.ConnectionStateChanged += (sender, args) =>
+{
+    switch (args.CurrentState)
+    {
+        case ConnectionState.Connected:
+            // Ready to send presence updates
+            break;
+        case ConnectionState.Disconnected:
+            // Connection lost, may retry
+            break;
+        case ConnectionState.Connecting:
+            // Establishing connection
+            break;
+        case ConnectionState.Disconnecting:
+            // Cleaning up connection
+            break;
+    }
+};
+```
 
-## AI usage notes
+### PresenceSnapshot
 
-- Prefer the current DRPCSharp naming scheme.
-- Do not copy the old `discord-rpc-csharp` API surface directly.
-- Treat the old repository as a reference for features, not architecture.
-- Keep transport details behind `DRPCSharp.Transport`.
-- Keep user-facing code centered on `PresenceSnapshot` and `DrpcSharpClient`.
+Immutable record representing Discord Rich Presence data.
+
+```csharp
+public sealed record PresenceSnapshot
+{
+    public string? Details { get; init; }           // Line 1: Main activity description
+    public string? State { get; init; }            // Line 2: Secondary status
+    public PresenceAssets? Assets { get; init; }   // Images and tooltips
+    public PresenceParty? Party { get; init; }     // Party size and capacity
+    public PresenceSecrets? Secrets { get; init; }  // Join/spectate functionality
+    public IReadOnlyList<PresenceButton> Buttons { get; init; }
+    public PresenceStatus Status { get; init; }
+    public DateTimeOffset? StartedAt { get; init; }
+    public DateTimeOffset? EndsAt { get; init; }
+}
+```
+
+#### Discord Rich Presence Display Format
+
+```
+Playing "Your Application Name"     <- Automatic (Line 0)
+Main Activity Description             <- Details field (Line 1)
+Secondary Status | Party Info        <- State + Party (Line 2)
+[Image] [Buttons]                     <- Assets + Buttons (Line 3)
+```
+
+### PresenceAssets
+
+```csharp
+public sealed record PresenceAssets
+{
+    public string? LargeImageKey { get; init; }   // 1024x1024 recommended
+    public string? LargeImageText { get; init; }  // Tooltip for large image
+    public string? SmallImageKey { get; init; }   // 512x512 recommended
+    public string? SmallImageText { get; init; }  // Tooltip for small image
+}
+```
+
+**Asset Guidelines:**
+- Upload assets through Discord Developer Portal → Rich Presence → Art Assets
+- Recommended size: 1024×1024 pixels for large, 512×512 for small
+- Format: PNG with transparency support
+- Maximum 300 assets per application
+- Asset keys are case-sensitive
+
+### PresenceParty
+
+```csharp
+public sealed record PresenceParty
+{
+    public string Id { get; init; }               // Unique party identifier
+    public int Size { get; init; }                // Current party size
+    public int MaxSize { get; init; }              // Maximum party capacity
+}
+```
+
+**Display Format:** `"State text (Size of MaxSize)"`
+
+### PresenceSecrets
+
+```csharp
+public sealed record PresenceSecrets
+{
+    public string? JoinSecret { get; init; }       // Enables "Join" button
+    public string? SpectateSecret { get; init; }   // Enables "Spectate" button
+    public string? MatchSecret { get; init; }    // Match-specific secret
+}
+```
+
+**Important:** Secrets enable game invite functionality. They should be:
+- Unique per session/party
+- Cryptographically secure
+- Not contain sensitive user data
+- Properly validated on your backend
+
+### PresenceButton
+
+```csharp
+public sealed record PresenceButton
+{
+    public string Label { get; init; }            // Button text (max 32 chars)
+    public string Url { get; init; }                // Must be valid absolute URL
+}
+```
+
+**Limitations:**
+- Maximum 2 buttons per presence
+- URLs must be absolute (https://example.com)
+- Labels limited to 32 characters
+- URLs must use HTTPS (HTTP not supported)
+
+## Transport Layer
+
+### IDrpcSharpTransport Interface
+
+```csharp
+public interface IDrpcSharpTransport
+{
+    bool IsConnected { get; }
+    event EventHandler<TransportErrorEventArgs>? ErrorOccurred;
+    
+    ValueTask ConnectAsync(CancellationToken cancellationToken = default);
+    ValueTask DisconnectAsync(CancellationToken cancellationToken = default);
+    ValueTask SetPresenceAsync(PresenceUpdateRequest request, CancellationToken cancellationToken = default);
+}
+```
+
+### Built-in Transports
+
+#### DiscordIpcTransport
+Production-ready transport using named pipes for Discord IPC communication.
+
+```csharp
+var options = new DiscordIpcTransportOptions
+{
+    PipeName = "discord-ipc-0",                    // Usually automatic
+    ConnectionTimeout = TimeSpan.FromSeconds(15),  // Connection timeout
+    RetryCount = 3,                               // Retry attempts
+    RetryDelay = TimeSpan.FromSeconds(1)          // Delay between retries
+};
+
+var transport = new DiscordIpcTransport("app-id", options);
+```
+
+#### InMemoryTransport
+For unit testing and development. Records all operations for verification.
+
+```csharp
+var transport = new InMemoryTransport();
+var client = new DrpcSharpClient(transport);
+
+// After operations:
+Assert.True(transport.Connected);
+Assert.NotNull(transport.LastPresenceUpdate);
+Assert.Equal("Test Details", transport.LastPresenceUpdate.Details);
+```
+
+#### NoOpTransport
+For testing scenarios where transport operations should be ignored.
+
+```csharp
+var transport = new NoOpTransport();
+var client = new DrpcSharpClient(transport);
+// All operations succeed but do nothing
+```
+
+## Validation Rules
+
+DRPCSharp validates all data before sending to Discord. Here are the validation rules:
+
+### PresenceSnapshot Validation
+```csharp
+public void Validate()
+{
+    // Timestamps must be chronological
+    if (StartedAt.HasValue && EndsAt.HasValue && EndsAt < StartedAt)
+        throw new ArgumentException("EndsAt must be on or after StartedAt.");
+    
+    // Party size validation
+    if (Party != null)
+    {
+        if (Party.Size < 1)
+            throw new ArgumentException("Party size must be positive.");
+        if (Party.Size > Party.MaxSize)
+            throw new ArgumentException("Party size cannot exceed MaxSize.");
+    }
+    
+    // Button limits
+    if (Buttons.Count > 2)
+        throw new ArgumentException("Buttons cannot contain more than two entries.");
+    
+    // Validate all nested objects
+    Assets?.Validate();
+    Party?.Validate();
+    Secrets?.Validate();
+    
+    foreach (var button in Buttons)
+        button.Validate();
+}
+```
+
+### Individual Field Validation
+
+**Details & State:**
+- Maximum 128 characters each
+- Cannot contain newlines or control characters
+- Unicode supported
+
+**Party:**
+- Size must be ≥ 1 and ≤ MaxSize
+- MaxSize must be ≥ 1
+- ID must not be empty
+
+**Secrets:**
+- Optional, but if provided must not be whitespace
+- Maximum 128 characters each
+
+**Buttons:**
+- Label: 1-32 characters
+- URL: Must be valid absolute URL with HTTPS
+
+## Error Handling
+
+### Transport Errors
+
+```csharp
+client.ErrorOccurred += (sender, args) =>
+{
+    var error = args.Exception;
+    var operation = args.Operation; // Connect, Send, Receive
+    var isRecoverable = args.IsRecoverable;
+    
+    if (!isRecoverable)
+    {
+        // Connection will be terminated
+        logger.LogError(error, "Unrecoverable transport error");
+    }
+    else
+    {
+        // Library will attempt recovery
+        logger.LogWarning(error, "Recoverable transport error");
+    }
+};
+```
+
+### Common Error Scenarios
+
+**Connection Failures:**
+- Discord not running → `TimeoutException`
+- Invalid application ID → `AuthenticationException`
+- IPC disabled → `InvalidOperationException`
+
+**Presence Update Failures:**
+- Not connected → `InvalidOperationException`
+- Invalid data → `ArgumentException` (validation)
+- Rate limiting → `RateLimitException`
+
+**Transport Errors:**
+- Pipe disconnected → `IOException` (recoverable)
+- Discord crashed → `PipeException` (unrecoverable)
+- Permission denied → `UnauthorizedAccessException`
+
+## Testing Strategies
+
+### Unit Testing with InMemoryTransport
+
+```csharp
+[TestClass]
+public class GamePresenceServiceTests
+{
+    private InMemoryTransport _transport;
+    private DrpcSharpClient _client;
+    private GamePresenceService _service;
+    
+    [TestInitialize]
+    public void Setup()
+    {
+        _transport = new InMemoryTransport();
+        _client = new DrpcSharpClient(_transport);
+        _service = new GamePresenceService(_client);
+    }
+    
+    [TestMethod]
+    public async Task UpdatePresence_WithValidGameState_UpdatesDiscord()
+    {
+        // Arrange
+        var gameState = new GameState
+        {
+            PlayerName = "TestPlayer",
+            Score = 100,
+            Level = 5
+        };
+        
+        // Act
+        await _service.UpdatePresenceAsync(gameState);
+        
+        // Assert
+        Assert.IsTrue(_transport.Connected);
+        Assert.IsNotNull(_transport.LastPresenceUpdate);
+        StringAssert.Contains(_transport.LastPresenceUpdate.Details, "TestPlayer");
+    }
+}
+```
+
+### Integration Testing
+
+```csharp
+[TestClass]
+public class DiscordIntegrationTests
+{
+    private const string TestAppId = "1234567890123456789";
+    
+    [TestMethod]
+    [TestCategory("Integration")]
+    public async Task FullPresenceLifecycle_Success()
+    {
+        await using var client = DrpcSharpClientFactory.Create(TestAppId);
+        
+        // Connect
+        await client.ConnectAsync();
+        Assert.IsTrue(client.IsConnected);
+        
+        // Set presence
+        await client.SetPresenceAsync(new PresenceSnapshot
+        {
+            Details = "Integration Test",
+            State = "Running tests",
+            StartedAt = DateTimeOffset.UtcNow
+        });
+        
+        Assert.IsNotNull(client.CurrentPresence);
+        
+        // Disconnect
+        await client.DisconnectAsync();
+        Assert.IsFalse(client.IsConnected);
+    }
+}
+```
+
+## Performance Considerations
+
+### Memory Management
+- PresenceSnapshot is a record type (immutable)
+- Transport reuses buffers where possible
+- No allocations during steady-state operation
+- Async operations use ValueTask for reduced allocations
+
+### Connection Management
+- Automatic reconnection with exponential backoff
+- Connection pooling for multiple clients
+- Configurable timeouts prevent resource leaks
+- Graceful degradation when Discord unavailable
+
+### Update Frequency
+- Discord rate limits: ~5 updates per 20 seconds
+- Recommended: Update every 15-30 seconds for dynamic content
+- Use change detection to avoid unnecessary updates
+- Batch updates when possible
+
+## Advanced Scenarios
+
+### Multi-Client Applications
+
+```csharp
+public class MultiGameService
+{
+    private readonly Dictionary<string, DrpcSharpClient> _clients = new();
+    
+    public async Task RegisterGameAsync(string gameId, string appId)
+    {
+        var client = DrpcSharpClientFactory.Create(appId);
+        _clients[gameId] = client;
+        await client.ConnectAsync();
+    }
+    
+    public async Task UpdateGamePresenceAsync(string gameId, PresenceSnapshot presence)
+    {
+        if (_clients.TryGetValue(gameId, out var client))
+        {
+            await client.SetPresenceAsync(presence);
+        }
+    }
+}
+```
+
+### Dynamic Asset Management
+
+```csharp
+public class AssetManager
+{
+    private readonly Dictionary<string, string> _assetCache = new();
+    
+    public PresenceAssets CreateAssetsForLevel(int level)
+    {
+        var largeKey = GetAssetKey($"level_{level}_background");
+        var smallKey = GetAssetKey($"level_{level}_icon");
+        
+        return new PresenceAssets
+        {
+            LargeImageKey = largeKey,
+            LargeImageText = $"Level {level}",
+            SmallImageKey = smallKey,
+            SmallImageText = $"Level {level} Icon"
+        };
+    }
+    
+    private string GetAssetKey(string baseName)
+    {
+        // Implement asset key resolution logic
+        // This might involve uploading assets dynamically or using predefined keys
+        return _assetCache.GetValueOrDefault(baseName, "default_asset");
+    }
+}
+```
+
+### Error Recovery Strategy
+
+```csharp
+public class ResilientPresenceService
+{
+    private readonly DrpcSharpClient _client;
+    private readonly ILogger<ResilientPresenceService> _logger;
+    private PresenceSnapshot? _lastSuccessfulPresence;
+    
+    public ResilientPresenceService(DrpcSharpClient client, ILogger<ResilientPresenceService> logger)
+    {
+        _client = client;
+        _logger = logger;
+        
+        _client.ErrorOccurred += OnErrorOccurred;
+        _client.ConnectionStateChanged += OnConnectionStateChanged;
+    }
+    
+    public async Task UpdatePresenceAsync(PresenceSnapshot presence)
+    {
+        try
+        {
+            await _client.SetPresenceAsync(presence);
+            _lastSuccessfulPresence = presence;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to update presence");
+            // Implement retry logic or fallback
+        }
+    }
+    
+    private async void OnConnectionStateChanged(object? sender, ConnectionStateChangedEventArgs e)
+    {
+        if (e.CurrentState == ConnectionState.Connected && _lastSuccessfulPresence != null)
+        {
+            // Re-send last presence after reconnection
+            try
+            {
+                await _client.SetPresenceAsync(_lastSuccessfulPresence);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to restore presence after reconnection");
+            }
+        }
+    }
+}
+```
+
+## Security Considerations
+
+### Secret Management
+- Never hardcode secrets in your application
+- Use secure random generation for join/spectate secrets
+- Validate secrets on your backend before allowing joins
+- Implement proper session management
+
+### Rate Limiting
+- Respect Discord's rate limits
+- Implement backoff strategies
+- Monitor for abuse patterns
+- Log suspicious activity
+
+### Input Validation
+- All user input should be validated
+- Sanitize strings to prevent injection
+- Limit string lengths appropriately
+- Validate URL formats for buttons
+
+## Migration Guide
+
+### From discord-rpc-csharp
+
+```csharp
+// Old API (discord-rpc-csharp)
+var client = new DiscordRpcClient("appId");
+client.Initialize();
+client.SetPresence(new RichPresence
+{
+    Details = "Old Library",
+    State = "Migrating..."
+});
+
+// New API (DRPCSharp)
+await using var client = DrpcSharpClientFactory.Create("appId");
+await client.ConnectAsync();
+await client.SetPresenceAsync(new PresenceSnapshot
+{
+    Details = "New Library",
+    State = "Migration complete!"
+});
+```
+
+Key differences:
+- Async/await throughout
+- Immutable data structures
+- Better error handling
+- Cleaner API surface
+- Built-in validation
+
+## Common Patterns
+
+### Presence Builder Pattern
+
+```csharp
+public class PresenceBuilder
+{
+    private string _details = "";
+    private string _state = "";
+    private PresenceAssets? _assets;
+    private DateTimeOffset? _startTime;
+    
+    public PresenceBuilder WithDetails(string details)
+    {
+        _details = details;
+        return this;
+    }
+    
+    public PresenceBuilder WithState(string state)
+    {
+        _state = state;
+        return this;
+    }
+    
+    public PresenceBuilder WithAssets(string largeImage, string smallImage = null)
+    {
+        _assets = new PresenceAssets
+        {
+            LargeImageKey = largeImage,
+            SmallImageKey = smallImage
+        };
+        return this;
+    }
+    
+    public PresenceBuilder WithTimer(DateTimeOffset? startTime = null)
+    {
+        _startTime = startTime ?? DateTimeOffset.UtcNow;
+        return this;
+    }
+    
+    public PresenceSnapshot Build()
+    {
+        return new PresenceSnapshot
+        {
+            Details = _details,
+            State = _state,
+            Assets = _assets,
+            StartedAt = _startTime
+        };
+    }
+}
+
+// Usage:
+var presence = new PresenceBuilder()
+    .WithDetails("Building something awesome")
+    .WithState("Coding with DRPCSharp")
+    .WithAssets("coding_icon")
+    .WithTimer()
+    .Build();
+```
+
+### Configuration Pattern
+
+```csharp
+public class DiscordPresenceConfiguration
+{
+    public string ApplicationId { get; set; } = "";
+    public TimeSpan ConnectionTimeout { get; set; } = TimeSpan.FromSeconds(15);
+    public int MaxRetries { get; set; } = 3;
+    public bool EnableAutoReconnect { get; set; } = true;
+    public LogLevel LogLevel { get; set; } = LogLevel.Information;
+}
+
+public static class DiscordPresenceFactory
+{
+    public static DrpcSharpClient CreateFromConfiguration(DiscordPresenceConfiguration config)
+    {
+        var options = new DiscordIpcTransportOptions
+        {
+            ConnectionTimeout = config.ConnectionTimeout,
+            RetryCount = config.MaxRetries,
+            EnableAutoReconnect = config.EnableAutoReconnect,
+            LogLevel = config.LogLevel
+        };
+        
+        return DrpcSharpClientFactory.Create(config.ApplicationId, options);
+    }
+}
+```
+
+## Troubleshooting for AI Developers
+
+### Common Integration Issues
+
+**"Client won't connect"**
+1. Verify Discord is running
+2. Check Game Activity is enabled in Discord settings
+3. Confirm application ID is correct
+4. Ensure no firewall blocking named pipes
+
+**"Images not showing"**
+1. Verify asset names match exactly (case-sensitive)
+2. Check assets are uploaded to Discord application
+3. Ensure image dimensions are correct (1024x1024)
+4. Wait for Discord cache to update (30-60 seconds)
+
+**"Presence updates failing"**
+1. Check validation errors in exceptions
+2. Verify client is connected before updating
+3. Ensure data doesn't exceed Discord limits
+4. Check for rate limiting (max 5 updates per 20 seconds)
+
+### Debug Techniques
+
+```csharp
+// Enable detailed logging
+var options = new DiscordIpcTransportOptions
+{
+    EnableDebugLogging = true,
+    LogLevel = LogLevel.Debug
+};
+
+// Monitor all events
+client.ConnectionStateChanged += (s, e) => Console.WriteLine($"State: {e.PreviousState} -> {e.CurrentState}");
+client.PresenceUpdated += (s, e) => Console.WriteLine($"Presence: {e.Snapshot.Details}");
+client.ErrorOccurred += (s, e) => Console.WriteLine($"Error: {e.Exception?.Message}");
+
+// Use InMemoryTransport for debugging
+var transport = new InMemoryTransport();
+var client = new DrpcSharpClient(transport);
+// Check transport.LastPresenceUpdate for sent data
+```
+
+## Performance Optimization
+
+### Memory Optimization
+```csharp
+// Reuse presence objects when possible
+private static readonly PresenceAssets _defaultAssets = new()
+{
+    LargeImageKey = "default_icon",
+    LargeImageText = "My Application"
+};
+
+// Use object pooling for frequent updates
+public class PresencePool
+{
+    private readonly ObjectPool<PresenceSnapshot.Builder> _pool;
+    
+    public PresencePool()
+    {
+        _pool = new DefaultObjectPool<PresenceSnapshot.Builder>(new BuilderPooledObjectPolicy());
+    }
+    
+    public PresenceSnapshot.Builder Rent() => _pool.Get();
+    public void Return(PresenceSnapshot.Builder builder) => _pool.Return(builder);
+}
+```
+
+### Connection Pooling
+```csharp
+public class DiscordConnectionPool
+{
+    private readonly ConcurrentDictionary<string, DrpcSharpClient> _pool = new();
+    
+    public DrpcSharpClient GetOrCreateClient(string appId)
+    {
+        return _pool.GetOrAdd(appId, id =>
+        {
+            var client = DrpcSharpClientFactory.Create(id);
+            client.ConnectAsync().ConfigureAwait(false);
+            return client;
+        });
+    }
+}
+```
+
+## Future Considerations
+
+### Discord Social SDK Migration
+The library is designed to support future Discord Social SDK integration:
+- Transport abstraction allows SDK implementation
+- Protocol layer can be extended for new features
+- Model layer supports additional activity types
+
+### New Discord Features
+Architecture supports future Discord features:
+- Activity types beyond "Playing"
+- Rich presence for voice channels
+- Advanced party management
+- Cross-platform presence synchronization
+
+---
+
+**For AI Developers:** This library prioritizes developer experience, type safety, and maintainability. When generating code or suggesting improvements, maintain these principles and follow the established patterns.
