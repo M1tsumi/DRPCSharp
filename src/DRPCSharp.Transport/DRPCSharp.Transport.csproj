@@ -1,0 +1,15 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DRPCSharp.Core\DRPCSharp.Core.csproj" />
+    <ProjectReference Include="..\DRPCSharp.Model\DRPCSharp.Model.csproj" />
+    <ProjectReference Include="..\DRPCSharp.Protocol\DRPCSharp.Protocol.csproj" />
+  </ItemGroup>
+
+</Project>

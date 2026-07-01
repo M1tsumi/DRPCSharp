@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/DRPCSharp.Core/DRPCSharp.Core.csproj" />
+    <Project Path="src/DRPCSharp.Model/DRPCSharp.Model.csproj" />
+    <Project Path="src/DRPCSharp.Protocol/DRPCSharp.Protocol.csproj" />
+    <Project Path="src/DRPCSharp.Transport/DRPCSharp.Transport.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/DRPCSharp.Tests/DRPCSharp.Tests.csproj" />
+  </Folder>
+</Solution>

@@ -1,0 +1,62 @@
+# DRPCSharp
+
+DRPCSharp is a small, async-first C# library for Discord Rich Presence.
+It is designed to be easy to understand, easy to extend, and safe to use.
+
+## What it does
+
+- Connects to Discord IPC.
+- Sends rich presence snapshots.
+- Tracks connection state.
+- Emits connection, presence, and transport error events.
+
+## Current public surface
+
+- `DRPCSharp.Core.DrpcSharpClient` - lifecycle, state, presence updates, and events.
+- `DRPCSharp.Model.PresenceSnapshot` - user-facing rich presence model.
+- `DRPCSharp.Model.PresenceParty` - party metadata.
+- `DRPCSharp.Model.PresenceSecrets` - join, spectate, and match secrets.
+- `DRPCSharp.Model.PresenceAssets` - image keys and tooltips.
+- `DRPCSharp.Model.PresenceButton` - presence buttons.
+- `DRPCSharp.Transport.DrpcSharpClientFactory` - convenience creation for the IPC-backed client.
+- `DRPCSharp.Transport.DiscordIpcTransport` - custom named-pipe transport.
+
+## Recommended usage
+
+Use the factory for the common path:
+
+```csharp
+await using var client = DrpcSharpClientFactory.Create("application-id");
+await client.ConnectAsync();
+await client.SetPresenceAsync(new PresenceSnapshot { Details = "Working" });
+```
+
+Use `DrpcSharpClient` directly when you want to inject a test transport.
+
+## Architecture
+
+- `DRPCSharp.Core` owns client state and events.
+- `DRPCSharp.Model` owns validation and user-facing presence data.
+- `DRPCSharp.Protocol` owns the transport DTO used internally.
+- `DRPCSharp.Transport` owns IPC framing, reconnect behavior, and pipe I/O.
+
+## Validation rules
+
+- Presence timestamps must not go backwards.
+- Buttons must be valid absolute URLs.
+- Presence buttons are limited to two.
+- Party sizes must be paired and ordered.
+- Secrets are optional but must not be whitespace when supplied.
+
+## Development commands
+
+- Build: `dotnet build DRPCSharp.slnx`
+- Test: `dotnet test DRPCSharp.slnx`
+
+## AI usage notes
+
+- Prefer the current DRPCSharp naming scheme.
+- Do not copy the old `discord-rpc-csharp` API surface directly.
+- Treat the old repository as a reference for features, not architecture.
+- Keep transport details behind `DRPCSharp.Transport`.
+- Keep user-facing code centered on `PresenceSnapshot` and `DrpcSharpClient`.
